@@ -6,6 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     x11vnc \
+    x11-utils \
     wget \
     curl \
     ca-certificates \
