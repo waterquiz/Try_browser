@@ -5,8 +5,12 @@ echo "=== Starting Browser Desktop ==="
 
 # Create VNC password file
 mkdir -p ~/.vnc
-echo "$VNC_PASSWORD" | x11vnc -storepasswd ~/.vnc/passwd 2>/dev/null || true
-chmod 600 ~/.vnc/passwd
+if [ -n "$VNC_PASSWORD" ]; then
+  echo "$VNC_PASSWORD" | x11vnc -storepasswd /dev/stdin ~/.vnc/passwd 2>/dev/null || \n  printf "$VNC_PASSWORD
+$VNC_PASSWORD
+" | x11vnc -storepasswd ~/.vnc/passwd 2>/dev/null || \n  echo -n "$VNC_PASSWORD" > ~/.vnc/passwd
+  chmod 600 ~/.vnc/passwd
+fi
 
 # Start virtual display
 echo "Starting Xvfb on $DISPLAY..."
@@ -25,12 +29,16 @@ sleep 3
 
 # Launch Chromium (lightweight, supports extensions)
 echo "Launching Chromium..."
-chromion --no-sandbox --disable-dev-shm-usage --disable-gpu --start-maximized --disable-software-rasterizer --window-size=1280,720 --disable-translate --disable-notifications --no-first-run --disable-default-apps about:blank &
+chromium --no-sandbox --disable-dev-shm-usage --disable-gpu --start-maximized --disable-software-rasterizer --window-size=1280,720 --disable-translate --disable-notifications --no-first-run --disable-default-apps about:blank &
 sleep 2
 
-# Start x11vnc (password-protected)
+# Start x11vnc
 echo "Starting x11vnc..."
-x11vnc -display $DISPLAY -rfbport 5900 -rfbauth ~/.vnc/passwd -forever -shared -nopw -bg -o /var/log/x11vnc.log 2>/dev/null || x11vnc -display $DISPLAY -rfbport 5900 -forever -shared -bg -o /var/log/x11vnc.log
+if [ -f ~/.vnc/passwd ]; then
+  x11vnc -display $DISPLAY -rfbport 5900 -rfbauth ~/.vnc/passwd -forever -shared -nopw -bg -o /var/log/x11vnc.log 2>/dev/null || \n  x11vnc -display $DISPLAY -rfbport 5900 -rfbauth ~/.vnc/passwd -forever -shared -bg -o /var/log/x11vnc.log
+else
+  x11vnc -display $DISPLAY -rfbport 5900 -forever -shared -nopw -bg -o /var/log/x11vnc.log
+fi
 
 sleep 1
 
