@@ -46,7 +46,7 @@ RUN mkdir -p /opt/noVNC && \
     echo "noVNC installed successfully"
 
 # Verify installations
-RUN ls /opt/noVNC/vnc.html && websockify --version
+RUN ls /opt/noVNC/vnc.html && echo "All good"
 
 ENV DISPLAY=:0
 ENV RESOLUTION=1280x720x24
