@@ -35,7 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --break-system-packages --no-cache-dir websockify==0.11.0
+RUN pip3 install --no-cache-dir websockify==0.11.0
 
 RUN mkdir -p /opt/noVNC && \
     cd /tmp && \
