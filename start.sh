@@ -16,13 +16,15 @@ for i in 1 2 3 4 5; do
   sleep 2
 done
 
-echo "Launching Google Chrome with sports extension..."
+W=${RESOLUTION%x*}; H=${RESOLUTION#*x}; H=${H%x*}
+echo "Launching Google Chrome (${W}x${H})..."
 google-chrome \
   --no-sandbox --disable-dev-shm-usage \
-  --start-maximized --disable-software-rasterizer \
+  --window-size=$W,$H --window-position=0,0 \
+  --disable-software-rasterizer \
   --disable-translate --disable-notifications \
   --no-first-run --disable-default-apps \
-  https://www.espn.com &
+  https://teaserfast.ru &
 sleep 2
 
 echo "Starting x11vnc (no password)..."
