@@ -3,11 +3,7 @@ set -e
 
 echo "=== Starting Ubuntu Browser Desktop ==="
 
-mkdir -p ~/.vnc
-if [ -n "$VNC_PASSWORD" ]; then
-  x11vnc -storepasswd "$VNC_PASSWORD" ~/.vnc/passwd 2>/dev/null
-  chmod 600 ~/.vnc/passwd
-fi
+PASSWD=${VNC_PASSWORD:-debian}
 
 echo "Starting Xvfb on $DISPLAY..."
 Xvfb $DISPLAY -screen 0 $RESOLUTION &
@@ -40,11 +36,7 @@ chromium-browser \
 sleep 2
 
 echo "Starting x11vnc..."
-if [ -f ~/.vnc/passwd ]; then
-  x11vnc -display $DISPLAY -rfbport 5900 -rfbauth ~/.vnc/passwd -forever -shared -bg -o /var/log/x11vnc.log
-else
-  x11vnc -display $DISPLAY -rfbport 5900 -forever -shared -nopw -bg -o /var/log/x11vnc.log
-fi
+x11vnc -display $DISPLAY -rfbport 5900 -passwd "$PASSWD" -forever -shared -bg -o /var/log/x11vnc.log
 sleep 2
 
 echo "Starting noVNC on port $PORT..."
@@ -52,6 +44,6 @@ websockify --web /opt/noVNC $PORT localhost:5900 &
 
 echo "=== Desktop ready! ==="
 echo "Open http://localhost:$PORT/vnc.html to connect"
-echo "VNC Password: $VNC_PASSWORD"
+echo "VNC Password: $PASSWD"
 
 wait
