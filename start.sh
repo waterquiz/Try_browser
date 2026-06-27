@@ -16,14 +16,6 @@ for i in 1 2 3 4 5; do
   sleep 2
 done
 
-echo "Starting dbus..."
-dbus-launch --exit-with-session &
-sleep 1
-
-echo "Starting XFCE desktop..."
-startxfce4 &
-sleep 3
-
 echo "Launching Google Chrome with sports extension..."
 google-chrome \
   --no-sandbox --disable-dev-shm-usage \

@@ -9,9 +9,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     x11vnc \
     x11-utils \
-    xfce4 \
-    xfce4-terminal \
-    dbus-x11 \
     wget \
     curl \
     ca-certificates \
