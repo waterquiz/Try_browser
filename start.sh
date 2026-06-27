@@ -5,9 +5,7 @@ echo "=== Starting Ubuntu Browser Desktop ==="
 
 mkdir -p ~/.vnc
 if [ -n "$VNC_PASSWORD" ]; then
-  echo "$VNC_PASSWORD" | x11vnc -storepasswd /dev/stdin ~/.vnc/passwd 2>/dev/null || \
-  printf "$VNC_PASSWORD\n$VNC_PASSWORD\n" | x11vnc -storepasswd ~/.vnc/passwd 2>/dev/null || \
-  echo -n "$VNC_PASSWORD" > ~/.vnc/passwd
+  x11vnc -storepasswd "$VNC_PASSWORD" ~/.vnc/passwd 2>/dev/null
   chmod 600 ~/.vnc/passwd
 fi
 
