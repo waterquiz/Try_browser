@@ -3,7 +3,6 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:0
 ENV RESOLUTION=1280x720x24
-ENV VNC_PASSWORD=debian
 ENV PORT=6080
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -16,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     curl \
     ca-certificates \
+    gnupg \
     python3 \
     python3-pip \
     fonts-liberation \
@@ -30,12 +30,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgtk-3-0 \
     libu2f-udev \
     libvulkan1 \
-    chromium-browser \
-    chromium-codecs-ffmpeg \
+    xdg-utils \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --no-cache-dir websockify==0.11.0
+
+RUN wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
+    apt-get install -y -f /tmp/chrome.deb 2>/dev/null || \
+    (dpkg -i /tmp/chrome.deb 2>/dev/null; apt-get install -y -f) && \
+    rm -f /tmp/chrome.deb
 
 RUN mkdir -p /opt/noVNC && \
     cd /tmp && \
@@ -45,7 +49,7 @@ RUN mkdir -p /opt/noVNC && \
     rm -f novnc.tar.gz
 
 RUN mkdir -p /etc/opt/chrome/policies/managed && \
-    printf '{\n  "ExtensionInstallForcelist": [\n    "ocgahpobhhfjgaggafmidogklgiefenj"\n  ],\n  "ExtensionAllowlist": [\n    "ocgahpobhhfjgaggafmidogklgiefenj"\n  ],\n  "BrowserAddPersonEnabled": false,\n  "BrowserGuestModeEnabled": false\n}\n' > /etc/opt/chrome/policies/managed/sports_extension.json
+    printf '{\n  "ExtensionInstallForcelist": [\n    "ocgahpobhhfjgaggafmidogklgiefenj"\n  ]\n}\n' > /etc/opt/chrome/policies/managed/sports_extension.json
 
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
