@@ -4,19 +4,14 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PORT=8080
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget \
-    ca-certificates \
-    curl \
-    git \
-    nano \
-    htop \
-    sudo \
-    bash \
+    wget ca-certificates curl \
+    git nano htop sudo \
+    python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-RUN wget -q -O /usr/bin/ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 && \
-    chmod +x /usr/bin/ttyd
+RUN pip3 install --no-cache-dir websockets
 
+COPY server.py /server.py
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
 
