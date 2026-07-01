@@ -1,9 +1,9 @@
-# Cloud Browser — noVNC + Google Chrome on Railway
+# Cloud Browser — Terminal Access via noVNC + Chrome on Railway
 
-**NOT a desktop.** There is no Ubuntu window, no XFCE, no Windows.  
-This is just a **browser** running in the cloud, streamed to you through your own web browser via noVNC.
+**NOT a desktop.** There is no Windows, no Ubuntu GUI, no XFCE, no RDP.  
+This project gives you **terminal access** to a cloud container that runs Google Chrome — streamed to your browser via noVNC.
 
-You open a URL → you see Chrome. That's it. No OS, no desktop, no RDP.
+You open a URL → you see a **terminal** where Chrome runs. That's it. No GUI, no OS desktop.
 
 ---
 
@@ -12,7 +12,7 @@ You open a URL → you see Chrome. That's it. No OS, no desktop, no RDP.
 ```
 cloud-browser/
 ├── Dockerfile          # Builds the container (Ubuntu minimal + Chrome + noVNC)
-├── start.sh            # Startup script: Xvfb → Chrome → x11vnc → websockify
+├── start.sh            # Startup: Xvfb → Chrome → x11vnc → websockify
 ├── railway.json        # Railway deploy config (auto-detect Dockerfile)
 ├── .dockerignore       # Excludes git, md from Docker build context
 ├── .gitignore          # Excludes logs, OS files from git
@@ -21,47 +21,133 @@ cloud-browser/
 
 ---
 
-## How It Works — The Pipeline (A to Z)
+## What This Project Actually Does
 
-```
-Your Browser (Chrome/Firefox/Edge on YOUR machine)
-        │
-        │  HTTPS request to Railway URL
-        ▼
-┌─────────────────────────────────────────┐
-│         Railway Cloud Server            │
-│                                         │
-│  ┌─────────────────────────────────┐   │
-│  │         Docker Container        │   │
-│  │                                 │   │
-│  │  noVNC ← websockify ← x11vnc ←─┼── Xvfb virtual display
-│  │  (web UI)   (proxy)  (VNC srv)  │      │
-│  │                                 │      │
-│  │                                 │  Google Chrome ← Extension (Sportsy)
-│  │                                 │      │
-│  │                                 │  renders web pages on virtual screen
-│  └─────────────────────────────────┘   │
-└─────────────────────────────────────────┘
-```
+This is **not** a Windows remote desktop or an Ubuntu VNC desktop.  
+It is a **browser-in-a-terminal** setup:
 
-### Step-by-Step Flow
+- A **virtual display** (Xvfb) acts as the "screen"
+- **Google Chrome** renders web pages on that virtual screen
+- **x11vnc** captures that screen and streams it
+- **noVNC** lets you view the stream in your browser
+- You interact with Chrome through the noVNC viewer
 
-1. **Xvfb** creates a fake monitor (no physical screen exists)
-2. **Google Chrome** launches on that fake monitor (opens your chosen URL)
-3. **x11vnc** captures whatever is on the fake monitor and serves it via VNC
-4. **websockify** proxies WebSocket ↔ TCP so your browser can talk to VNC
-5. **noVNC** is an HTML5 page served to you — it connects through websockify to x11vnc
-6. **You** open the Railway URL → see Chrome directly — no desktop in between
+Everything runs in a **terminal/container environment** on Railway — no GUI operating system.
 
 ---
 
-## File 1: Dockerfile — The Container
+## Architecture — How It All Connects
+
+```
+YOUR BROWSER (any device: phone, laptop, tablet)
+        │
+        │  HTTPS → https://your-project.up.railway.app/vnc.html
+        ▼
+┌──────────────────────────────────────────────────┐
+│                  RAILWAY SERVER                   │
+│  ┌────────────────────────────────────────────┐  │
+│  │         DOCKER CONTAINER (Terminal)        │  │
+│  │                                            │  │
+│  │  ┌──────────┐    ┌──────────┐   ┌───────┐ │  │
+│  │  │ noVNC    │◄──►│ websock  │◄─►│ x11vnc│ │  │
+│  │  │ (web UI) │    │ -ify     │   │(VNC)  │ │  │
+│  │  │ :6080    │    │ :6080    │   │:5900  │ │  │
+│  │  └──────────┘    └──────────┘   └───┬───┘ │  │
+│  │                                     │     │  │
+│  │                              ┌──────▼──┐  │  │
+│  │                              │  Xvfb   │  │  │
+│  │                              │(virtual │  │  │
+│  │                              │ display)│  │  │
+│  │                              └──────┬──┘  │  │
+│  │                                     │     │  │
+│  │                              ┌──────▼──┐  │  │
+│  │                              │  Chrome │  │  │
+│  │                              │(browser)│  │  │
+│  │                              └─────────┘  │  │
+│  └────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────┘
+```
+
+**This is a terminal/CLI environment.** The container has no desktop, no taskbar, no start menu. Just Chrome running on a virtual display.
+
+---
+
+## Pipeline — Step by Step (A to Z)
+
+### Phase 1: Xvfb — Create a Virtual Display
+
+Xvfb (X Virtual Framebuffer) creates a fake screen in memory. There is no physical monitor, no GPU, no display connected. It's just a block of memory that acts like a screen.
+
+```
+Xvfb :0 -screen 0 1280x720x24 &
+```
+
+- `:0` = display number
+- `1280x720x24` = width × height × color depth
+
+### Phase 2: Wait for Display Readiness
+
+The script polls `xdpyinfo` to confirm Xvfb is fully initialized before launching Chrome. Without this, Chrome would crash.
+
+### Phase 3: Parse Resolution
+
+```
+RESOLUTION=1280x720x24  →  W=1280, H=720
+```
+
+### Phase 4: Launch Google Chrome
+
+Chrome opens on the virtual display, pointed at your chosen URL. Key flags:
+
+| Flag | Why It's Needed |
+|------|----------------|
+| `--no-sandbox` | Required inside Docker containers |
+| `--disable-dev-shm-usage` | Prevents crash in low-memory containers |
+| `--window-size=$W,$H` | Fills the virtual screen exactly (no black bars) |
+| `--window-position=0,0` | Pins window to top-left corner |
+| `--no-first-run` | Skips Chrome's setup wizard |
+| `--disable-software-rasterizer` | Software rendering (no GPU) |
+
+### Phase 5: x11vnc — Stream the Display
+
+x11vnc captures whatever is on the virtual display and serves it over VNC protocol on port 5900.
+
+```
+x11vnc -display :0 -rfbport 5900 -nopw -forever -shared -bg
+```
+
+- No password (`-nopw`) — the Railway URL is already unguessable
+- Runs forever, allows multiple viewers
+
+### Phase 6: websockify — Bridge WebSocket to TCP
+
+Your browser speaks WebSocket. x11vnc speaks TCP. websockify translates between them.
+
+```
+websockify --web /opt/noVNC 6080 localhost:5900
+```
+
+It also serves the noVNC web interface files (`vnc.html`, `javascript`).
+
+### Phase 7: You Connect via Browser
+
+1. Open `https://project.up.railway.app/vnc.html`
+2. noVNC (JavaScript) loads in your browser
+3. It opens a WebSocket to the Railway server
+4. websockify forwards to x11vnc (TCP)
+5. VNC handshake completes (no password)
+6. Screen updates flow: Chrome → Xvfb → x11vnc → websockify → your browser
+7. Your clicks/keys flow back: browser → WebSocket → websockify → x11vnc → Chrome
+
+---
+
+## File 1: Dockerfile — Full Explanation
 
 ```dockerfile
 FROM ubuntu:22.04
 ```
 
-Minimal Ubuntu. This is **NOT** a desktop — just enough OS to run Chrome and the streaming tools.
+Minimal Ubuntu — just enough to run Chrome + streaming tools. **No desktop GUI installed.**
 
 ```dockerfile
 ENV DEBIAN_FRONTEND=noninteractive
@@ -70,47 +156,31 @@ ENV RESOLUTION=1280x720x24
 ENV PORT=6080
 ```
 
-| Variable | Purpose |
-|----------|---------|
-| `DISPLAY=:0` | Tells Chrome which virtual screen to use |
-| `RESOLUTION=1280x720x24` | Width × Height × Color Depth |
-| `PORT=6080` | Default port (Railway overrides with its own `$PORT`) |
+**`DISPLAY=:0`** — tells Chrome which virtual screen to use. Without this, Chrome doesn't know where to render.
 
 ```dockerfile
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    xvfb \
-    x11vnc \
-    x11-utils \
-    wget curl ca-certificates gnupg \
-    python3 python3-pip \
-    fonts-liberation \
-    libx11-dev libxrender1 libxtst6 \
-    libnss3 libasound2 libatk-bridge2.0-0 \
-    libdrm2 libgbm1 libgtk-3-0 \
-    libu2f-udev libvulkan1 \
+    xvfb \              # Virtual display (fake monitor)
+    x11vnc \            # Screen capture → VNC stream
+    x11-utils \         # xdpyinfo for readiness check
+    wget curl ca-certificates gnupg \   # Download tools
+    python3 python3-pip \               # For websockify
+    fonts-liberation \                  # Chrome needs fonts
+    libx11-dev libxrender1 libxtst6 \   # X11 libraries
+    libnss3 libasound2 libatk-bridge2.0-0 \  # Chrome deps
+    libdrm2 libgbm1 libgtk-3-0 \        # Chrome deps
+    libu2f-udev libvulkan1 \            # Chrome deps
     xdg-utils procps \
     && rm -rf /var/lib/apt/lists/*
 ```
 
-**What each package does:**
-
-| Package | Role |
-|---------|------|
-| `xvfb` | Creates a virtual display (fake screen) |
-| `x11vnc` | Captures virtual display → VNC stream |
-| `x11-utils` | Provides `xdpyinfo` to check Xvfb is ready |
-| `python3-pip` | Installs websockify |
-| `fonts-liberation` | Chrome font rendering |
-| `libnss3`, `libgtk-3-0`, etc. | Chrome shared library dependencies |
-| `procps` | Provides `ps`, `kill` etc. |
-
-No desktop environment (no XFCE, no GNOME, no KDE). Just the bare minimum to run a browser.
+**No desktop packages** (no xfce4, no gnome, no lxde). Only the minimum to run Chrome in a terminal.
 
 ```dockerfile
 RUN pip3 install --no-cache-dir websockify==0.11.0
 ```
 
-**websockify** — translates WebSocket (your browser) → TCP (VNC server). Required because noVNC uses WebSockets and x11vnc uses plain TCP.
+WebSocket ↔ TCP bridge. Converts your browser's WebSocket connection into a plain TCP connection that x11vnc understands.
 
 ```dockerfile
 RUN wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
@@ -118,9 +188,9 @@ RUN wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-
     rm -f /tmp/chrome.deb
 ```
 
-Installs **Google Chrome** from Google's official .deb.  
-Why not `chromium-browser`? On Ubuntu 22.04, that package is a snap wrapper and fails inside Docker with:  
-`Command '/usr/bin/chromium-browser' requires the chromium snap to be installed.`
+Installs **Google Chrome** from the official Google .deb package.  
+`chromium-browser` from Ubuntu repos is a snap wrapper — it fails in Docker with:  
+`Command requires the chromium snap to be installed.`
 
 ```dockerfile
 RUN mkdir -p /opt/noVNC && \
@@ -131,7 +201,7 @@ RUN mkdir -p /opt/noVNC && \
     rm -f novnc.tar.gz
 ```
 
-Downloads **noVNC v1.4.0** — a web-based VNC viewer written in HTML5/JavaScript. This is what the user sees in their browser.
+Downloads **noVNC v1.4.0** — an HTML5 VNC viewer. This is the web page you open in your browser to see Chrome's screen.
 
 ```dockerfile
 RUN mkdir -p /etc/opt/chrome/policies/managed && \
@@ -139,8 +209,8 @@ RUN mkdir -p /etc/opt/chrome/policies/managed && \
     > /etc/opt/chrome/policies/managed/auto_install.json
 ```
 
-**Chrome Managed Policy** — force-installs a Chrome extension on every launch without user interaction.  
-To find an extension ID: Chrome Web Store → extension page → URL ends with `/detail/.../EXTENSION_ID`
+Chrome **managed policy** — force-installs an extension without user interaction.  
+Find extension IDs at: Chrome Web Store → extension page → URL pattern: `.../detail/NAME/EXTENSION_ID`
 
 ```dockerfile
 COPY start.sh /start.sh
@@ -149,20 +219,16 @@ EXPOSE ${PORT}
 CMD ["/start.sh"]
 ```
 
-Sets the startup script as the container entrypoint.
-
 ---
 
-## File 2: start.sh — The Startup Sequence
+## File 2: start.sh — Full Explanation
 
 ```bash
 #!/bin/bash
 set -e
 ```
 
-`set -e` = exit on first error.
-
-### Phase 1: Start Virtual Display
+`set -e` = exit immediately if any command fails.
 
 ```bash
 echo "Starting Xvfb on $DISPLAY..."
@@ -170,9 +236,7 @@ Xvfb $DISPLAY -screen 0 $RESOLUTION &
 sleep 3
 ```
 
-Xvfb creates display `:0` at `1280x720x24`. The `&` runs it in background.
-
-### Phase 2: Wait for X
+Creates virtual display `:0` at resolution `1280x720x24` in the background.
 
 ```bash
 for i in 1 2 3 4 5; do
@@ -185,39 +249,31 @@ for i in 1 2 3 4 5; do
 done
 ```
 
-Without this loop, Chrome might start before Xvfb is ready and crash immediately.
-
-### Phase 3: Parse Resolution
+**Safety check:** waits up to 10 seconds for Xvfb to initialize. Without this, Chrome starts too early and crashes.
 
 ```bash
 W=${RESOLUTION%x*}; H=${RESOLUTION#*x}; H=${H%x*}
+echo "Launching Google Chrome (${W}x${H})..."
 ```
 
-Takes `1280x720x24` → W=1280, H=720
-
-### Phase 4: Launch Chrome
+Extracts width and height from `1280x720x24`.
 
 ```bash
-echo "Launching Google Chrome (${W}x${H})..."
 google-chrome \
-  --no-sandbox                        # Required in Docker containers
-  --disable-dev-shm-usage              # Prevents crash in low-memory
-  --window-size=$W,$H                  # Fills fake screen completely
-  --window-position=0,0                # No black borders on sides
-  --disable-software-rasterizer        # No GPU needed
-  --disable-translate                  # Skip translate popup
-  --disable-notifications              # No notification prompts
-  --no-first-run                       # Skip first-run wizard
-  --disable-default-apps               # No welcome page
-  https://your-start-url.com &         # ← CHANGE THIS
+  --no-sandbox \
+  --disable-dev-shm-usage \
+  --window-size=$W,$H \
+  --window-position=0,0 \
+  --disable-software-rasterizer \
+  --disable-translate \
+  --disable-notifications \
+  --no-first-run \
+  --disable-default-apps \
+  https://your-start-url.com &
 sleep 2
 ```
 
-**Why `--window-size` instead of `--start-maximized`:**  
-`--start-maximized` asks a window manager to maximize. No window manager exists here.  
-`--window-size=1280,720 --window-position=0,0` directly sets the exact position and size.
-
-### Phase 5: Start VNC Server
+Launches Chrome on the virtual display.
 
 ```bash
 echo "Starting x11vnc (no password)..."
@@ -225,37 +281,22 @@ x11vnc -display $DISPLAY -rfbport 5900 -nopw -forever -shared -bg -o /var/log/x1
 sleep 2
 ```
 
-x11vnc captures the virtual display content.
-
-| Flag | Purpose |
-|------|---------|
-| `-nopw` | No password (URL is already private) |
-| `-forever` | Keep running after client disconnects |
-| `-shared` | Multiple people can view |
-| `-bg` | Run in background |
-
-### Phase 6: Start Web Proxy
+Starts VNC server to capture and stream the virtual display.
 
 ```bash
 echo "Starting noVNC on port $PORT..."
 websockify --web /opt/noVNC $PORT localhost:5900 &
-```
 
-websockify serves:
-- Static files from `/opt/noVNC` (vnc.html, etc.) at `http://host:PORT/`
-- WebSocket proxy at `ws://host:PORT/` → `tcp://localhost:5900`
-
-```bash
-echo "=== Desktop ready! ==="
+echo "=== Ready! ==="
 echo "Open http://localhost:$PORT/vnc.html to connect"
 wait
 ```
 
-`wait` keeps the container alive.
+Starts the WebSocket proxy and keeps the container alive.
 
 ---
 
-## File 3: railway.json — Deployment Config
+## File 3: railway.json
 
 ```json
 {
@@ -271,7 +312,7 @@ wait
 }
 ```
 
-Tells Railway: build using Dockerfile, restart if crashed.
+Tells Railway: use Dockerfile to build, restart if the container crashes.
 
 ---
 
@@ -285,7 +326,7 @@ README.md
 node_modules
 ```
 
-Keeps the Docker build context small.
+Excludes unnecessary files from Docker build for faster builds.
 
 ---
 
@@ -297,20 +338,27 @@ Keeps the Docker build context small.
 Thumbs.db
 ```
 
-Prevents log files and OS artifacts from being committed.
+Excludes logs and OS junk from git.
 
 ---
 
-## Full Method — From Zero to Running Browser
+## Complete Method — From Zero to Deployed
 
 ### Prerequisites
 
-- A **GitHub** account
-- A **Railway** account (free tier: https://railway.com)
+| Required | Purpose |
+|----------|---------|
+| GitHub account | Host the code |
+| Railway account (free) | Deploy the container |
 
-### Step 1 — Create the Project
+### Step 1: Create the Project Folder
 
-Create a folder with these 6 files:
+```powershell
+mkdir cloud-browser
+cd cloud-browser
+```
+
+Create these 6 files with the exact contents from above:
 
 ```
 cloud-browser/
@@ -322,70 +370,65 @@ cloud-browser/
 └── README.md
 ```
 
-Copy the contents from the sections above into each file.
+### Step 2: Customize Your Settings
 
-### Step 2 — Customize
+**Change default URL** — edit `start.sh` line with `https://your-start-url.com`
 
-In `start.sh`, line 27:  
-Change `https://your-start-url.com` to your desired URL.
+**Change extension** — edit `Dockerfile` line with `EXTENSION_ID_HERE`
 
-In `Dockerfile`, line 48-49:  
-Change the extension ID to your preferred Chrome extension.
+**Change resolution** — edit `Dockerfile` line `ENV RESOLUTION=1280x720x24`
 
-### Step 3 — Push to GitHub
+### Step 3: Push to GitHub
 
 ```powershell
-cd cloud-browser
 git init
 git add .
-git commit -m "Cloud browser: Chrome + noVNC on Railway"
+git commit -m "Cloud browser with terminal access"
 git branch -M main
-git remote add origin https://github.com/YOUR_USER/REPO_NAME.git
+git remote add origin https://github.com/YOUR_USER/YOUR_REPO.git
 git push -u origin main
 ```
 
-### Step 4 — Deploy on Railway
+### Step 4: Deploy on Railway
 
-1. Go to https://railway.com
+1. Open https://railway.com
 2. Click **New Project** → **Deploy from GitHub**
-3. Select your new repository
-4. Railway auto-detects `Dockerfile` and builds
-5. Wait ~5-10 minutes for first build
-6. Click the generated URL (ends with `.up.railway.app`)
+3. Select your repository
+4. Railway detects Dockerfile → builds automatically
+5. Wait for build to finish (first time: 5-10 minutes)
+6. Click the generated project URL
 
-### Step 5 — Connect
+### Step 5: Connect
 
-1. Open the Railway URL in your browser
-2. Add `/vnc.html` to the URL (e.g., `https://project.up.railway.app/vnc.html`)
-3. Click **Connect** — no password needed
-4. Google Chrome loads with your chosen URL
+1. Open `https://your-project.up.railway.app/vnc.html`
+2. Click **Connect** (no password)
+3. Chrome loads with your chosen URL and the pre-installed extension
 
 ---
 
-## Customization Guide
+## Customization
 
-### Change Default URL
+### Change the Start URL
 
-Edit `start.sh`:
+In `start.sh`:
 
 ```bash
-https://your-new-url.com &
+https://my-website.com &
 ```
 
-### Change Screen Resolution
+### Change Resolution
 
-Edit `Dockerfile`:
+In `Dockerfile`:
 
 ```dockerfile
-ENV RESOLUTION=1920x1080x24
+ENV RESOLUTION=1920x1080x24    # Full HD
+ENV RESOLUTION=1024x768x24     # Standard
 ```
 
-Also update `start.sh` to match if hardcoded — our script auto-parses from `$RESOLUTION`.
+### Change Chrome Extension
 
-### Install a Different Chrome Extension
-
-1. Chrome Web Store → find extension
-2. URL: `.../detail/EXTENSION_ID`
+1. Go to Chrome Web Store
+2. Copy extension ID from URL: `.../detail/NAME/`**`EXTENSION_ID`**
 3. Edit `Dockerfile`:
 
 ```dockerfile
@@ -394,102 +437,49 @@ Also update `start.sh` to match if hardcoded — our script auto-parses from `$R
 ]
 ```
 
-For multiple extensions:
+Multiple extensions:
 
 ```dockerfile
 "ExtensionInstallForcelist": [
-    "EXTENSION_1_ID",
-    "EXTENSION_2_ID"
+    "EXT_1_ID",
+    "EXT_2_ID"
 ]
 ```
 
-### Remove Chrome Extension
+### Add a Password
 
-Delete the policy file from the Dockerfile:
-
-```dockerfile
-# Remove this entire RUN block:
-# RUN mkdir -p ... && printf ...
-```
-
-### Add VNC Password
-
-In `start.sh`, replace:
+In `start.sh`, change:
 
 ```bash
 x11vnc ... -nopw ...
 ```
 
-with:
+to:
 
 ```bash
-x11vnc ... -passwd "yourpassword" ...
+x11vnc ... -passwd "mypassword" ...
 ```
 
 ---
 
 ## Troubleshooting
 
-### Build Fails: `no such option: --break-system-packages`
-
-**Cause:** Old pip version doesn't support this flag.  
-**Fix:** Use `pip3 install --no-cache-dir websockify==0.11.0` (no `--break-system-packages`).
-
-### Build Fails: Chrome install error
-
-**Cause:** Network timeout downloading Chrome.  
-**Fix:** The Dockerfile uses `wget` with retries. Add `|| apt-get install -y chromium` as fallback.
-
-### Runtime: `chromium-browser requires the chromium snap`
-
-**Cause:** Ubuntu's `chromium-browser` is a snap wrapper that doesn't work in Docker.  
-**Fix:** Use `google-chrome` from the official `.deb` (as shown in our Dockerfile).
-
-### Runtime: `password check failed`
-
-**Cause:** Broken VNC password file.  
-**Fix:** Use `-passwd "pass"` or `-nopw` instead of `-storepasswd`.
-
-### Runtime: Black borders around browser
-
-**Cause:** `--start-maximized` doesn't work without a window manager.  
-**Fix:** Use `--window-size=$W,$H --window-position=0,0`.
-
-### Runtime: Browser crashes on start
-
-**Cause:** Xvfb not ready when Chrome launches.  
-**Fix:** The startup script has a 5-attempt wait loop. Check logs for `X display ready!`.
-
-### Connection: noVNC loads but shows "Disconnected"
-
-**Cause:** x11vnc or websockify not running.  
-**Fix:** Check Railway logs. Ensure x11vnc started successfully.
-
-### Connection: Blank screen / no Chrome
-
-**Cause:** Chrome failed to launch (missing library).  
-**Fix:** Check logs for missing `.so` files. Add them via `apt-get install`.
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| `password check failed` | Corrupt password file | Use `-passwd "pass"` or `-nopw` |
+| `chromium-browser requires snap` | Ubuntu snap wrapper | Use Google Chrome .deb instead |
+| `--break-system-packages` error | Old pip version | Remove that flag |
+| Black borders around Chrome | Window size mismatch | Use `--window-size=$W,$H --window-position=0,0` |
+| Chrome crashes on start | Xvfb not ready yet | Wait loop in start.sh handles this |
+| noVNC shows "Disconnected" | x11vnc/websockify failed | Check Railway logs |
+| Blank screen in noVNC | Chrome failed to launch | Check logs for missing libs |
+| Container exits immediately | Script error | Check Railway runtime logs |
 
 ---
 
-## Comparison: This vs. Traditional Remote Desktop
+## Local Testing
 
-| Feature | This Project | Traditional RDP/VNC |
-|---------|-------------|-------------------|
-| What you see | Only Chrome browser | Full desktop (start menu, taskbar, etc.) |
-| OS in container | Minimal Ubuntu, no desktop | Full desktop environment |
-| Deployment | Railway (2-click deploy) | Requires VPN, port forwarding, static IP |
-| Access | Any browser, no client needed | Requires RDP/VNC client |
-| Security | Railway URL (HTTPS + unguessable) | Requires firewall rules |
-| Resource usage | ~500MB RAM | ~2GB+ RAM |
-| Cost | Railway free tier | VPS/server monthly cost |
-| Setup time | 10 minutes | 1-2 hours |
-
----
-
-## How to Test Locally (Before Deploying)
-
-Requires Docker Desktop:
+If you have Docker Desktop:
 
 ```powershell
 docker build -t cloud-browser .
@@ -499,61 +489,29 @@ docker run -d -p 6080:6080 cloud-browser
 
 ---
 
-## Architecture: What Happens on Each Connection
-
-```
-1. You open https://project.up.railway.app/vnc.html
-   │
-2. Your browser downloads noVNC (HTML + JS) from websockify
-   │
-3. noVNC opens a WebSocket connection to wss://project.up.railway.app/
-   │
-4. websockify receives the WebSocket and opens TCP to localhost:5900
-   │
-5. x11vnc accepts the TCP connection (VNC handshake)
-   │
-6. VNC protocol negotiates: no auth needed (-nopw)
-   │
-7. x11vnc starts sending framebuffer updates (screen captures)
-   │
-8. noVNC renders the framebuffer as an HTML5 canvas in your browser
-   │
-9. Your mouse clicks / key presses go back through:
-   Browser → WebSocket → websockify → TCP → x11vnc → Xvfb → Chrome
-   │
-10. Chrome processes the input (click link, type URL, etc.)
-    │
-11. Screen updates flow back → noVNC renders them
-    │
-    (Loop continues until you close the tab)
-```
-
----
-
-## Environment Variables Reference
+## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RESOLUTION` | `1280x720x24` | Screen size (WxHxD) |
-| `PORT` | `6080` | noVNC port (Railway auto-sets this) |
+| `RESOLUTION` | `1280x720x24` | Virtual display size |
+| `PORT` | `6080` | Web server port (Railway overrides) |
 | `DISPLAY` | `:0` | X11 display number |
 
-Set these in Railway Dashboard → Project → Variables.
+Set custom values in Railway Dashboard → Project → Variables.
 
 ---
 
-## Quick Commands Reference
+## Quick Commands
 
 ```powershell
-# Build and test locally
+# Build & test locally
 docker build -t cloud-browser .
 docker run -d -p 6080:6080 cloud-browser
-# Open http://localhost:6080/vnc.html
 
-# Push to GitHub
+# Push updates
 git add .
 git commit -m "update"
 git push
 
-# Railway deploys automatically on push
+# Railway auto-deploys on every push
 ```
